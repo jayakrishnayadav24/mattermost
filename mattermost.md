@@ -36,7 +36,7 @@ AWS Console → **EC2** → **Instances** → **Launch instances**.
 |-------|-------|
 | Name | `mattermost-host` |
 | AMI | **Ubuntu Server 24.04 LTS** (x86_64) |
-| Instance type | `t3a.micro` (demo) or larger |
+| Instance type | `t3a.medium` (demo) or larger |
 | Key pair | Create/select one, e.g. `mattermost-key` → download the `.pem` |
 | Root volume | **20 GB gp3** (the 8 GB default fills up fast) |
 
