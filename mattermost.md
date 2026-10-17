@@ -1,6 +1,6 @@
 # Mattermost on Docker — Ubuntu 24.04 EC2 Deployment
 
-A single-host guide to deploy **Mattermost** using plain **Docker** (no Docker Compose) on one
+A single-host guide to deploy **Mattermost** using plain **Docker** on one
 **Ubuntu 24.04** EC2 instance. Three containers: MySQL + Mattermost + Nginx.
 
 ```
