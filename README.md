@@ -65,11 +65,19 @@ Create an IAM role the workflow assumes. Its **trust policy** must restrict to y
     "Action": "sts:AssumeRoleWithWebIdentity",
     "Condition": {
       "StringEquals": { "token.actions.githubusercontent.com:aud": "sts.amazonaws.com" },
-      "StringLike":   { "token.actions.githubusercontent.com:sub": "repo:jayakrishnayadav24/mattermost:ref:refs/heads/main" }
+      "StringLike":   { "token.actions.githubusercontent.com:sub": "repo:jayakrishnayadav24*/mattermost*" }
     }
   }]
 }
 ```
+
+> **Immutable subject claims (repos created after 2026-07-15):** GitHub now issues the `sub`
+> claim with immutable owner/repo IDs embedded, e.g.
+> `repo:jayakrishnayadav24@123456/mattermost@456789:ref:refs/heads/main`. A trust policy pinned to
+> the old `repo:owner/repo:ref:refs/heads/main` format will NOT match and you get
+> *"Not authorized to perform sts:AssumeRoleWithWebIdentity"*. The wildcard pattern
+> `repo:jayakrishnayadav24*/mattermost*` above matches both the old and new formats. To pin it
+> exactly, decode the real `sub` from the token first (see the troubleshooting note in the repo).
 
 The role also needs a **permissions policy** — the pipeline creates the EC2 and all its
 supporting infrastructure, so without this `terraform apply` fails with `AccessDenied`. Attach
@@ -113,7 +121,7 @@ production):
       "Sid": "PassSsmRoleToEc2Only",
       "Effect": "Allow",
       "Action": "iam:PassRole",
-      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/mattermost-ssm-role",
+      "Resource": "arn:aws:iam::<ACCOUNT_ID>:role/mattermost-ec2-ssm-role",
       "Condition": {
         "StringEquals": { "iam:PassedToService": "ec2.amazonaws.com" }
       }
@@ -152,10 +160,11 @@ Notes:
 - The EC2 actions are the explicit set Terraform needs to create/destroy the VPC, subnet, IGW,
   route table, security group, and instance (no `ec2:*` wildcard). If you extend `main.tf` with
   new resource types, add the matching actions.
-- `iam:PassRole` is scoped to the single `mattermost-ssm-role` and restricted to EC2 via the
-  `iam:PassedToService` condition — never use `PassRole` on `"*"` (it would let the role pass any
-  role to any service). This matches `name_prefix = "mattermost"`; if you change the prefix,
-  update the role name in the ARN.
+- `iam:PassRole` is scoped to the single `mattermost-ec2-ssm-role` (the EC2 instance role
+  Terraform creates) and restricted to EC2 via the `iam:PassedToService` condition — never use
+  `PassRole` on `"*"`. This matches `name_prefix = "mattermost"`; if you change the prefix, update
+  the role name in the ARN. (Note: this is a *different* role from the GitHub Actions OIDC role —
+  do not reuse one name for both, or `terraform apply` fails with `EntityAlreadyExists`.)
 - Replace `<ACCOUNT_ID>`, `<TF_STATE_BUCKET>`, and `<SSM_BUCKET>` with your real values.
 
 ### 3. GitHub repo configuration
@@ -196,6 +205,42 @@ Or trigger manually: **Actions → Deploy Mattermost to EC2 (SSM) → Run workfl
 When it finishes, the run **Summary** shows the instance ID and the URL. Open
 `http://<public-ip>` and create the first admin account.
 
+## Troubleshooting OIDC (all of these were hit and fixed)
+
+The `Configure AWS credentials (OIDC)` step is where first-time setups fail. The error text
+tells you which prerequisite is missing:
+
+| Error | Cause | Fix |
+|-------|-------|-----|
+| `Could not assume role with OIDC: The web identity token provided could not be validated` | The **OIDC identity provider** for `token.actions.githubusercontent.com` does not exist in the account | Create it (Provider URL `https://token.actions.githubusercontent.com`, Audience `sts.amazonaws.com`) |
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | The role **trust policy** does not match the token's `sub` claim | Fix the `sub` pattern (see below) |
+| `Permission to <repo> denied to <other-user>` (on `git push`) | Git authenticated as the wrong GitHub account | `gh auth login` as the repo owner, then `gh auth setup-git` |
+
+**The `sub` claim gotcha (immutable subject IDs):** repos created after **2026-07-15** get a
+`sub` with embedded owner/repo IDs:
+
+```
+repo:jayakrishnayadav24@<ownerID>/mattermost@<repoID>:ref:refs/heads/main
+```
+
+A trust policy pinned to the old `repo:owner/repo:ref:refs/heads/main` form will NOT match and
+you get *"Not authorized"*. Use a wildcard that matches both old and new forms:
+
+```json
+"StringLike": { "token.actions.githubusercontent.com:sub": "repo:jayakrishnayadav24*/mattermost*" }
+```
+
+Update the live role without redeploying:
+
+```bash
+aws iam update-assume-role-policy --role-name <gha-role> --policy-document file://trust.json
+```
+
+> **Note on IDs/names used here:** this deployment reuses the role `mattermost-ssm-role` as the
+> GitHub Actions OIDC role (account `<ACCOUNT_ID>`, region `ap-south-1`). The role name does not
+> matter — what matters is that its **trust policy** points at the GitHub OIDC provider and its
+> `sub` pattern matches your repo. `AWS_ROLE_ARN` in GitHub Variables must be *this* role.
+
 ## Idempotency
 
 - **Terraform** uses S3 remote state with native lockfile locking, so repeated runs reconcile
@@ -227,6 +272,13 @@ ansible-playbook playbook.yml \
 ```
 
 ## Teardown
+
+**From GitHub Actions (recommended):** the workflow has an `action` input. Go to
+**Actions → Deploy Mattermost to EC2 (SSM) → Run workflow**, set **action = `destroy`**, and run.
+That runs `terraform destroy` over the same OIDC role and S3 state. A plain push (or
+`action = apply`) deploys as usual.
+
+**Locally:**
 
 ```bash
 cd terraform

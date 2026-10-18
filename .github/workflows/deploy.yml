@@ -4,6 +4,14 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      action:
+        description: "What to do"
+        type: choice
+        default: apply
+        options:
+          - apply
+          - destroy
 
 # OIDC: lets this workflow request a short-lived AWS credential with no
 # stored access keys. "id-token: write" is required for the OIDC handshake.
@@ -22,21 +30,16 @@ env:
   TF_VAR_ssm_transfer_bucket: ${{ vars.SSM_BUCKET }}
 
 jobs:
+  # ===========================================================================
+  # APPLY — runs on push to main, or manual run with action=apply.
+  # ===========================================================================
   deploy:
+    if: github.event_name == 'push' || inputs.action == 'apply'
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout
         uses: actions/checkout@v4
-
-      - name: Debug OIDC subject and role
-        run: |
-          echo "repo:  ${GITHUB_REPOSITORY}"
-          echo "ref:   ${GITHUB_REF}"
-          echo "event: ${GITHUB_EVENT_NAME}"
-          echo "=> token sub will be: repo:${GITHUB_REPOSITORY}:ref:${GITHUB_REF}"
-          echo "role-to-assume var: ${{ vars.AWS_ROLE_ARN }}"
-          echo "(trust policy sub pattern must match: repo:jayakrishnayadav24/mattermost:*)"
 
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
@@ -117,3 +120,43 @@ jobs:
           echo "### Mattermost deployed :rocket:" >> "$GITHUB_STEP_SUMMARY"
           echo "- Instance: \`${{ steps.tf.outputs.instance_id }}\`" >> "$GITHUB_STEP_SUMMARY"
           echo "- URL: http://${{ steps.tf.outputs.public_ip }}" >> "$GITHUB_STEP_SUMMARY"
+
+  # ===========================================================================
+  # DESTROY — only runs on a manual dispatch with action=destroy.
+  # Tears down everything Terraform created (EC2, VPC, SG, IAM instance role).
+  # ===========================================================================
+  destroy:
+    if: github.event_name == 'workflow_dispatch' && inputs.action == 'destroy'
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configure AWS credentials (OIDC)
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ env.AWS_REGION }}
+
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.5
+
+      - name: Terraform Init
+        working-directory: terraform
+        run: |
+          terraform init \
+            -backend-config="bucket=${TF_STATE_BUCKET}" \
+            -backend-config="key=mattermost/terraform.tfstate" \
+            -backend-config="region=${AWS_REGION}"
+
+      - name: Terraform Destroy
+        working-directory: terraform
+        run: terraform destroy -auto-approve -input=false -var "region=${AWS_REGION}"
+
+      - name: Summary
+        run: |
+          echo "### Mattermost infrastructure destroyed :wastebasket:" >> "$GITHUB_STEP_SUMMARY"
+          echo "All Terraform-managed resources (EC2, VPC, SG, instance role) were removed." >> "$GITHUB_STEP_SUMMARY"

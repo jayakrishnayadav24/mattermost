@@ -109,9 +109,9 @@ data "aws_iam_policy_document" "ec2_assume" {
 }
 
 resource "aws_iam_role" "ssm" {
-  name               = "${var.name_prefix}-ssm-role"
+  name               = "${var.name_prefix}-ec2-ssm-role"
   assume_role_policy = data.aws_iam_policy_document.ec2_assume.json
-  tags               = { Name = "${var.name_prefix}-ssm-role" }
+  tags               = { Name = "${var.name_prefix}-ec2-ssm-role" }
 }
 
 resource "aws_iam_role_policy_attachment" "ssm_core" {
