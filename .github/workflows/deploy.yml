@@ -29,6 +29,15 @@ jobs:
       - name: Checkout
         uses: actions/checkout@v4
 
+      - name: Debug OIDC subject and role
+        run: |
+          echo "repo:  ${GITHUB_REPOSITORY}"
+          echo "ref:   ${GITHUB_REF}"
+          echo "event: ${GITHUB_EVENT_NAME}"
+          echo "=> token sub will be: repo:${GITHUB_REPOSITORY}:ref:${GITHUB_REF}"
+          echo "role-to-assume var: ${{ vars.AWS_ROLE_ARN }}"
+          echo "(trust policy sub pattern must match: repo:jayakrishnayadav24/mattermost:*)"
+
       - name: Configure AWS credentials (OIDC)
         uses: aws-actions/configure-aws-credentials@v4
         with:
