@@ -12,7 +12,7 @@ variable "name_prefix" {
 
 variable "instance_type" {
   type    = string
-  default = "t3a.micro"
+  default = "t3a.medium"
 }
 
 variable "root_volume_gb" {
