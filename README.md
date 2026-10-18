@@ -112,7 +112,8 @@ production):
         "iam:AttachRolePolicy", "iam:DetachRolePolicy",
         "iam:PutRolePolicy", "iam:GetRolePolicy", "iam:DeleteRolePolicy",
         "iam:CreateInstanceProfile", "iam:DeleteInstanceProfile",
-        "iam:GetInstanceProfile",
+        "iam:GetInstanceProfile", "iam:ListInstanceProfiles",
+        "iam:ListInstanceProfilesForRole",
         "iam:AddRoleToInstanceProfile", "iam:RemoveRoleFromInstanceProfile"
       ],
       "Resource": "*"
@@ -157,14 +158,17 @@ production):
 ```
 
 Notes:
-- The EC2 actions are the explicit set Terraform needs to create/destroy the VPC, subnet, IGW,
-  route table, security group, and instance (no `ec2:*` wildcard). If you extend `main.tf` with
-  new resource types, add the matching actions.
+- **Attach this as ONE inline policy under a single name** (e.g. `mattermost-gha`). Do not split
+  it across multiple `aws iam put-role-policy` calls with different documents — `put-role-policy`
+  *replaces* the whole policy for a given name, so a second call with the same name silently drops
+  the earlier statements (this is what causes the `iam:PassRole`/`RunInstances` failures to
+  reappear). One name, one complete document.
+- The EC2 actions can be the explicit create/describe/delete set, or simply `ec2:*` for this
+  project (Terraform touches many EC2 resource types; the explicit list is easy to under-scope).
 - `iam:PassRole` is scoped to the single `mattermost-ec2-ssm-role` (the EC2 instance role
   Terraform creates) and restricted to EC2 via the `iam:PassedToService` condition — never use
-  `PassRole` on `"*"`. This matches `name_prefix = "mattermost"`; if you change the prefix, update
-  the role name in the ARN. (Note: this is a *different* role from the GitHub Actions OIDC role —
-  do not reuse one name for both, or `terraform apply` fails with `EntityAlreadyExists`.)
+  `PassRole` on `"*"`. This is a *different* role from the GitHub Actions OIDC role — do not reuse
+  one name for both, or `terraform apply` fails with `EntityAlreadyExists`.
 - Replace `<ACCOUNT_ID>`, `<TF_STATE_BUCKET>`, and `<SSM_BUCKET>` with your real values.
 
 ### 3. GitHub repo configuration
