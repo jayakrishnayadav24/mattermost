@@ -144,8 +144,7 @@ resource "aws_iam_instance_profile" "ssm" {
 }
 
 # ---------------------------------------------------------------------------
-# EC2 host. No key_name — access is via SSM only. user_data ensures the
-# SSM agent is running (preinstalled on Ubuntu 24.04 as a snap).
+# EC2 host. No key_name — access is via SSM only.
 # ---------------------------------------------------------------------------
 resource "aws_instance" "mattermost" {
   ami                    = data.aws_ami.ubuntu.id
@@ -159,11 +158,9 @@ resource "aws_instance" "mattermost" {
     volume_type = "gp3"
   }
 
-  user_data = <<-EOF
-    #!/bin/bash
-    set -e
-    snap start amazon-ssm-agent || systemctl enable --now snap.amazon-ssm-agent.amazon-ssm-agent.service || true
-  EOF
+  # Ubuntu 24.04 ships the SSM agent preinstalled and auto-starting, and the
+  # instance profile grants AmazonSSMManagedInstanceCore, so no user_data is
+  # needed — the agent registers on its own shortly after boot.
 
   tags = {
     Name = "${var.name_prefix}-host"

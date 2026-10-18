@@ -76,17 +76,21 @@ jobs:
       - name: Wait for SSM to register the instance
         run: |
           id="${{ steps.tf.outputs.instance_id }}"
-          echo "Waiting for $id to be a managed, online SSM instance..."
-          for i in $(seq 1 40); do
+          echo "Waiting for $id to become a managed, Online SSM instance..."
+          # up to ~10 min: fresh Ubuntu instances can take a couple of minutes
+          # before the snap SSM agent registers.
+          for i in $(seq 1 60); do
             status=$(aws ssm describe-instance-information \
               --filters "Key=InstanceIds,Values=$id" \
               --query 'InstanceInformationList[0].PingStatus' \
               --output text 2>/dev/null || echo "None")
-            echo "attempt $i: PingStatus=$status"
-            [ "$status" = "Online" ] && exit 0
-            sleep 15
+            echo "attempt $i/60: PingStatus=$status"
+            [ "$status" = "Online" ] && { echo "SSM online."; exit 0; }
+            sleep 10
           done
-          echo "Instance did not come online in SSM in time" >&2
+          echo "::error::Instance $id did not register with SSM in time." >&2
+          echo "Check: instance has the SSM instance profile, has outbound 443," >&2
+          echo "and the amazon-ssm-agent snap is running on the host." >&2
           exit 1
 
       # ---- Ansible over SSM: install Docker + run the stack -------------
