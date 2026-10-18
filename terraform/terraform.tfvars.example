@@ -1,0 +1,12 @@
+# Copy to terraform.tfvars for local runs (git-ignored). CI passes these as -var flags.
+region              = "ap-south-1"
+name_prefix         = "mattermost"
+instance_type       = "t3a.micro"
+root_volume_gb      = 20
+
+# Lock SSH to your IP in production, e.g. ["1.2.3.4/32"].
+ssh_ingress_cidrs   = ["0.0.0.0/0"]
+http_ingress_cidrs  = ["0.0.0.0/0"]
+
+# S3 bucket used by the aws_ssm Ansible plugin to stage files to the host.
+ssm_transfer_bucket = "CHANGE-ME-mattermost-ssm-transfer"

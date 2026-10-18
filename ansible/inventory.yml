@@ -1,0 +1,14 @@
+---
+# Static inventory targeting one EC2 host over AWS SSM (no SSH).
+# The instance id and S3 transfer bucket are injected by the pipeline via
+# environment variables (TARGET_INSTANCE_ID, SSM_BUCKET, AWS_REGION).
+all:
+  hosts:
+    mattermost:
+      # The "ansible_host" for the aws_ssm plugin is the EC2 instance ID.
+      ansible_host: "{{ lookup('env', 'TARGET_INSTANCE_ID') }}"
+      ansible_connection: community.aws.aws_ssm
+      ansible_aws_ssm_region: "{{ lookup('env', 'AWS_REGION') | default('ap-south-1', true) }}"
+      ansible_aws_ssm_bucket_name: "{{ lookup('env', 'SSM_BUCKET') }}"
+      # Ubuntu AMIs run the SSM agent as root, so become uses sudo normally.
+      ansible_python_interpreter: /usr/bin/python3

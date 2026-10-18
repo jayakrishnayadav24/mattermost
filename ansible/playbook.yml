@@ -1,0 +1,150 @@
+---
+- name: Deploy Mattermost (Docker) on Ubuntu 24.04 via SSM
+  hosts: mattermost
+  become: true
+  gather_facts: true
+
+  vars:
+    app_dir: /opt/mattermost
+    mattermost_image: "mattermost/mattermost-team-edition:9.11" # 10+ dropped MySQL
+    mysql_image: "mysql:8"
+    nginx_image: "nginx:stable"
+    # Secrets come from extra-vars / env (never hardcoded):
+    #   mysql_root_password, mysql_password, site_url
+    mysql_database: mattermostdb
+    mysql_user: mmuser
+
+  tasks:
+    # ---- Docker install (official apt repo for Ubuntu) -------------------
+    - name: Install prerequisites
+      ansible.builtin.apt:
+        name: [ca-certificates, curl, gnupg, python3-pip]
+        state: present
+        update_cache: true
+
+    - name: Create apt keyring dir
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Add Docker GPG key
+      ansible.builtin.get_url:
+        url: https://download.docker.com/linux/ubuntu/gpg
+        dest: /etc/apt/keyrings/docker.asc
+        mode: "0644"
+
+    - name: Add Docker apt repository
+      ansible.builtin.apt_repository:
+        repo: "deb [arch={{ 'amd64' }} signed-by=/etc/apt/keyrings/docker.asc] https://download.docker.com/linux/ubuntu {{ ansible_distribution_release }} stable"
+        filename: docker
+        state: present
+
+    - name: Install Docker Engine
+      ansible.builtin.apt:
+        name:
+          - docker-ce
+          - docker-ce-cli
+          - containerd.io
+          - docker-compose-plugin
+        state: present
+        update_cache: true
+
+    - name: Ensure Docker is running and enabled
+      ansible.builtin.service:
+        name: docker
+        state: started
+        enabled: true
+
+    - name: Install Docker SDK for Python (for community.docker modules)
+      ansible.builtin.pip:
+        name: docker
+        state: present
+
+    # ---- App files -------------------------------------------------------
+    - name: Create app directory
+      ansible.builtin.file:
+        path: "{{ app_dir }}/nginx"
+        state: directory
+        mode: "0755"
+
+    - name: Copy nginx config
+      ansible.builtin.copy:
+        src: files/nginx/mattermost.conf
+        dest: "{{ app_dir }}/nginx/mattermost.conf"
+        mode: "0644"
+      notify: Restart nginx
+
+    # ---- Docker resources (idempotent via community.docker) --------------
+    - name: Create docker network
+      community.docker.docker_network:
+        name: mattermost-net
+        state: present
+
+    - name: Run MySQL
+      community.docker.docker_container:
+        name: mattermost-mysql
+        image: "{{ mysql_image }}"
+        state: started
+        restart_policy: unless-stopped
+        networks:
+          - name: mattermost-net
+        command: >-
+          --character-set-server=utf8mb4
+          --collation-server=utf8mb4_general_ci
+        env:
+          MYSQL_ROOT_PASSWORD: "{{ mysql_root_password }}"
+          MYSQL_DATABASE: "{{ mysql_database }}"
+          MYSQL_USER: "{{ mysql_user }}"
+          MYSQL_PASSWORD: "{{ mysql_password }}"
+        volumes:
+          - mysql-data:/var/lib/mysql
+
+    - name: Wait for MySQL to accept connections
+      ansible.builtin.command:
+        cmd: >-
+          docker exec mattermost-mysql
+          mysqladmin ping -h localhost -p{{ mysql_root_password }} --silent
+      register: mysql_ping
+      retries: 30
+      delay: 5
+      until: mysql_ping.rc == 0
+      changed_when: false
+
+    - name: Run Mattermost app
+      community.docker.docker_container:
+        name: mattermost-app
+        image: "{{ mattermost_image }}"
+        state: started
+        restart_policy: unless-stopped
+        networks:
+          - name: mattermost-net
+        env:
+          MM_SQLSETTINGS_DRIVERNAME: mysql
+          MM_SQLSETTINGS_DATASOURCE: "{{ mysql_user }}:{{ mysql_password }}@tcp(mattermost-mysql:3306)/{{ mysql_database }}?charset=utf8mb4,utf8&writeTimeout=30s"
+          MM_SERVICESETTINGS_SITEURL: "{{ site_url }}"
+        volumes:
+          - mm-config:/mattermost/config
+          - mm-data:/mattermost/data
+          - mm-logs:/mattermost/logs
+          - mm-plugins:/mattermost/plugins
+
+    - name: Run Nginx reverse proxy
+      community.docker.docker_container:
+        name: mattermost-nginx
+        image: "{{ nginx_image }}"
+        state: started
+        restart_policy: unless-stopped
+        networks:
+          - name: mattermost-net
+        published_ports:
+          - "80:80"
+        volumes:
+          - "{{ app_dir }}/nginx/mattermost.conf:/etc/nginx/conf.d/default.conf:ro"
+
+  handlers:
+    - name: Restart nginx
+      community.docker.docker_container:
+        name: mattermost-nginx
+        state: started
+        restart: true
